@@ -1,7 +1,7 @@
 %%---------------------------------******-----------------------
 %声明本文档为模板类
 \ProvidesClass{homework-thesis}
-    [2022/05/13 v1.0 update  https://github.com/mobtgzhang/computervisionhomework]
+    [2022/05/13 v1.0 update  https://github.com/mobtgzhang/latex/computervisionhomework]
 %依赖的Latex版本
 \NeedsTeXFormat{LaTeX2e}[2005/12/01]
 %% Loading Class
