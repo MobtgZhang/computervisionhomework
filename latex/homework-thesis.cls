@@ -146,7 +146,7 @@
 		}
   \end{center}
   \begin{flushleft}
-    \songti\zihao{4}\textcolor{red}{（题目任选，但需要在数字图像处理技术范围内，包括但不限于图像增强、图像去噪、边缘检测、角点检测、纹理特征提取、SIFT、SURF等等，如果自己没有把握，担心不在范围内，请直接与我联系确认。） }{\footnote{\bfseries{本latex模板作者:mobtgzhang, 更新地址\\ \url{https://github.com/mobtgzhang/computervisionhomework}}}}
+    \songti\zihao{4}\textcolor{red}{（题目任选，但需要在数字图像处理技术范围内，包括但不限于图像增强、图像去噪、边缘检测、角点检测、纹理特征提取、SIFT、SURF等等，如果自己没有把握，担心不在范围内，请直接与我联系确认。） }{\footnote{\bfseries{本latex模板作者:mobtgzhang, 更新地址\\ \url{https://github.com/mobtgzhang/latex/computervisionhomework}}}}
   \end{flushleft}
   \newpage
 }
