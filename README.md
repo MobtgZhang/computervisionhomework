@@ -8,4 +8,4 @@
 
 **大作业主要内容**
 
-使用Julia语言中Flux框架或Julia/python的MXNet深度学习框架构建模型
+使用pytorch深度学习框架构建模型
