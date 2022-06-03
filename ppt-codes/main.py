@@ -3,6 +3,7 @@ import time
 import argparse
 import torch
 import torch.nn as nn
+import torchvision
 from torch.nn.utils.rnn import pack_padded_sequence
 import torch.backends.cudnn as cudnn
 from transformers import ViTFeatureExtractor
@@ -28,7 +29,7 @@ def get_args():
     parser.add_argument('--fine-tune-encoder',action='store_true')
     parser.add_argument('--dataset',default='wukong',type=str)
     parser.add_argument('--checkpoint',default=None,type=str)
-    parser.add_argument('--batch-size',default=4,type=int)
+    parser.add_argument('--batch-size',default=64,type=int)
     parser.add_argument('--workers',default=1,type=int)
     parser.add_argument('--epochs',default=120,type=int)
     parser.add_argument('--alpha-c',default=1.0,type=float)
@@ -72,6 +73,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
     cudnn.benchmark = True  # set to true only if inputs to model are fixed size; otherwise lot of computational overhead
     # Initialize / load checkpoint
+    best_bleu4 = 0.0
     if args.checkpoint is None:
         decoder = DecoderWithAttention(attention_dim=args.attention_dim,
                                        embed_dim=args.emb_dim,
@@ -110,8 +112,12 @@ def main():
     # Custom dataloaders
     # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
     #                                  std=[0.229, 0.224, 0.225])
-    
-    transform = None
+    transform = torch.nn.Sequential(
+        torchvision.transforms.Resize((640,480)),
+        # torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    )
+    transform = torchvision.transforms.Resize((640,480))
+    # transform =torchvision.transforms.CenterCrop((640,480)) 
     train_dataset = CaptionDataset(result_dataset_dir,'train',word_dict,transform=transform)
     train_loader = torch.utils.data.DataLoader(train_dataset,batch_size=args.batch_size,
                                                shuffle=True, num_workers=args.workers, 
@@ -127,8 +133,11 @@ def main():
                                               shuffle=True, num_workers=args.workers,
                                               collate_fn=batchfy,
                                               pin_memory=True)
-    
-    
+    train_loss_list = []
+    train_top5score = []
+    valid_loss_list = []
+    valid_top5score = []
+    valid_blue4_list = []
     # Epochs
     for epoch in range(start_epoch, args.epochs):
 
@@ -139,7 +148,7 @@ def main():
             adjust_learning_rate(decoder_optimizer, 0.8)
 
         # One epoch's training
-        train(train_loader=train_loader,
+        losses,top5accs = train(train_loader=train_loader,
               encoder=encoder,
               decoder=decoder,
               criterion=criterion,
@@ -150,16 +159,20 @@ def main():
               alpha_c = args.alpha_c,
               grad_clip = args.grad_clip,
               print_freq = args.print_freq)
-
+        train_top5score.append(top5accs)
+        train_loss_list.append(losses)
         # One epoch's validation
-        recent_bleu4 = validate(val_loader=valid_loader,
+        recent_bleu4,top5accs,losses = validate(val_loader=valid_loader,
                                 encoder=encoder,
                                 decoder=decoder,
                                 criterion=criterion,
                                 word_dict=word_dict,
-                                alpha_c=args.aphla_c,
+                                alpha_c=args.alpha_c,
                                 device=device,
                                 print_freq=args.print_freq)
+        valid_blue4_list.append(recent_bleu4)
+        valid_loss_list.append(losses)
+        valid_top5score.append(top5accs)
 
         # Check if there was an improvement
         is_best = recent_bleu4 > best_bleu4
@@ -173,7 +186,15 @@ def main():
         # Save checkpoint
         save_checkpoint(args.dataset, epoch, epochs_since_improvement, encoder, decoder, encoder_optimizer,
                         decoder_optimizer, recent_bleu4, is_best)
-
+    save_list(train_loss_list,'train-loss.txt')
+    save_list(train_top5score,'train-score.txt')
+    save_list(valid_loss_list,'valid-loss.txt')
+    save_list(valid_top5score,'valid-score.txt')
+    save_list(valid_blue4_list,'valid-blue4.txt')
+def save_list(data_list,file_name):
+    with open(file_name,mode='w',encoding='utf-8') as wfp:
+        for value in data_list:
+            wfp.write(str(value)+"\n")
 def save_checkpoint(data_name, epoch, epochs_since_improvement, encoder, decoder, encoder_optimizer, decoder_optimizer,
                     bleu4, is_best):
     """
@@ -247,8 +268,12 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
 
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
-        scores, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
-        targets, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
+        # len_sent = pack_padded_sequence(scores, decode_lengths, batch_first=True)
+        # print(len(len_sent))
+        # print(len_sent)
+        # exit()
+        scores, _, _, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
+        targets, _, _, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
 
         # Calculate loss
         loss = criterion(scores, targets)
@@ -282,15 +307,16 @@ def train(train_loader, encoder, decoder, criterion, encoder_optimizer, decoder_
         start = time.time()
 
         # Print status
-        if i % print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data Load Time {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Top-5 Accuracy {top5.val:.3f} ({top5.avg:.3f})'.format(epoch, i, len(train_loader),
+        if idx % print_freq == 0:
+            print('Epoch: [{0}][{1}/{2}] '
+                  'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+                  'Data Load Time {data_time.val:.3f} ({data_time.avg:.3f}) '
+                  'Loss {loss.val:.4f} ({loss.avg:.4f}) '
+                  'Top-5 Accuracy {top5.val:.3f} ({top5.avg:.3f})'.format(epoch, idx, len(train_loader),
                                                                           batch_time=batch_time,
                                                                           data_time=data_time, loss=losses,
                                                                           top5=top5accs))
+    return losses.get_avg(),top5accs.get_avg()
 def validate(val_loader, encoder, decoder, criterion,word_dict,alpha_c,device,print_freq,):
     """
     Performs one epoch's validation.
@@ -318,17 +344,16 @@ def validate(val_loader, encoder, decoder, criterion,word_dict,alpha_c,device,pr
     # solves the issue #57
     with torch.no_grad():
         # Batches
-        for i, (imgs, caps, caplens, allcaps) in enumerate(val_loader):
-
+        for idx,item in enumerate(val_loader):
+            index,sent,imgs,caplens = item
             # Move to device, if available
             imgs = imgs.to(device)
-            caps = caps.to(device)
-            caplens = caplens.to(device)
+            sent = sent.to(device)
 
             # Forward prop.
             if encoder is not None:
                 imgs = encoder(imgs)
-            scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(imgs, caps, caplens)
+            scores, caps_sorted, decode_lengths, alphas, sort_ind = decoder(imgs, sent, caplens)
 
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
             targets = caps_sorted[:, 1:]
@@ -336,8 +361,8 @@ def validate(val_loader, encoder, decoder, criterion,word_dict,alpha_c,device,pr
             # Remove timesteps that we didn't decode at, or are pads
             # pack_padded_sequence is an easy trick to do this
             scores_copy = scores.clone()
-            scores, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
-            targets, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
+            scores, _, _, _ = pack_padded_sequence(scores, decode_lengths, batch_first=True)
+            targets, _, _, _ = pack_padded_sequence(targets, decode_lengths, batch_first=True)
 
             # Calculate loss
             loss = criterion(scores, targets)
@@ -353,11 +378,11 @@ def validate(val_loader, encoder, decoder, criterion,word_dict,alpha_c,device,pr
 
             start = time.time()
 
-            if i % print_freq == 0:
-                print('Validation: [{0}/{1}]\t'
-                      'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Top-5 Accuracy {top5.val:.3f} ({top5.avg:.3f})\t'.format(i, len(val_loader), batch_time=batch_time,
+            if idx % print_freq == 0:
+                print('Validation: [{0}/{1}] '
+                      'Batch Time {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+                      'Loss {loss.val:.4f} ({loss.avg:.4f}) '
+                      'Top-5 Accuracy {top5.val:.3f} ({top5.avg:.3f}) '.format(idx, len(val_loader), batch_time=batch_time,
                                                                                 loss=losses, top5=top5accs))
 
             # Store references (true captions), and hypothesis (prediction) for each image
@@ -365,7 +390,8 @@ def validate(val_loader, encoder, decoder, criterion,word_dict,alpha_c,device,pr
             # references = [[ref1a, ref1b, ref1c], [ref2a, ref2b], ...], hypotheses = [hyp1, hyp2, ...]
 
             # References
-            allcaps = allcaps[sort_ind]  # because images were sorted in the decoder
+            allcaps = sent[sort_ind]  # because images were sorted in the decoder
+            allcaps = allcaps.repeat(allcaps.shape[0],1,1)
             for j in range(allcaps.shape[0]):
                 img_caps = allcaps[j].tolist()
                 img_captions = list(
@@ -393,8 +419,7 @@ def validate(val_loader, encoder, decoder, criterion,word_dict,alpha_c,device,pr
                 top5=top5accs,
                 bleu=bleu4))
 
-    return bleu4
-
+    return bleu4,top5accs,losses
 
 if __name__ == "__main__":
     main()

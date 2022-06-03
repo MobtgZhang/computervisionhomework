@@ -117,7 +117,7 @@ class CaptionDataset(Dataset):
     """
     A PyTorch Dataset class to be used in a PyTorch DataLoader to create batches.
     """
-    def __init__(self,data_path,split,word_dict,caption_len = 64,transform=None):
+    def __init__(self,data_path,split,word_dict,transform=None):
         """
         :param data_folder: folder where data files are stored
         :param data_name: base name of processed datasets
@@ -125,8 +125,9 @@ class CaptionDataset(Dataset):
         :param transform: image transform pipeline
         """
         self.split = split
-        self.caption_len = caption_len
+        #self.batch_size = batch_size
         self.word_dict = word_dict
+        self.data_path = data_path
         assert self.split in {'train', 'valid', 'test'}
 
         idx_file_name = os.path.join(data_path,"processed","%s.idx"%self.split)
@@ -135,8 +136,7 @@ class CaptionDataset(Dataset):
         content_file_name = os.path.join(data_path,"raw","id_text.csv")
         self.real_ids,self.content_list = self.read_content(content_file_name)
         
-        imgs_path = os.path.join(data_path,"raw","images")
-        self.imgs_list = self.read_imgs(imgs_path)
+        
         
         # PyTorch transformation pipeline for the image (normalizing, etc.)
         self.transform = transform
@@ -156,22 +156,26 @@ class CaptionDataset(Dataset):
             real_ids = [keys_list[idx] for idx in self.index_list]
             content_list = [all_dataset[idx] for idx in real_ids]
             return real_ids,content_list
-    def read_imgs(self,imgs_path):
-        imgs_list = []
-        for idx in self.real_ids:
-            file_name = os.path.join(imgs_path,"img-%s.jpg"%idx)
-            img_mat = np.array(Image.open(file_name))
-            imgs_list.append(img_mat)
-        return imgs_list
     def __getitem__(self,idx):
         # Remember, the Nth caption corresponds to the (N // captions_per_image)th image
         # img = torch.FloatTensor(self.imgs_list[idx] / 255.)
-        img = self.imgs_list[idx].transpose(2,0,1)
+        imgs_path = os.path.join(self.data_path,"raw","images")
+        file_name = os.path.join(imgs_path,"img-%s"%self.real_ids[idx])
+        img_mat = Image.open(file_name)
+        img_mat = img_mat.convert("RGB")
+        # img = self.imgs_list[idx].transpose(2,0,1)
         if self.transform is not None:
-            img = self.transform(img)
+            img_mat = self.transform(img_mat)
+            img = np.array(img_mat).transpose(2,0,1)
+        else:
+            img = np.array(img_mat).transpose(2,0,1)
         sentence = [self.word_dict[word] for word in self.content_list[idx]]
         sentence = [self.word_dict[self.word_dict.start]]+sentence+[self.word_dict[self.word_dict.end]]
-        
+        # if self.split!='train':
+        #    allcaps = np.arange((idx//self.batch_size)*self.batch_size,
+        #                (idx//self.batch_size+1)*self.batch_size)
+        #    return self.real_ids[idx],sentence,img,allcaps
+        # else:
         return self.real_ids[idx],sentence,img
     def __len__(self):
         return self.dataset_size
@@ -195,7 +199,10 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+    def get_avg(self):
+        return self.avg
 def batchfy(batch):
+    flag = len(batch[0])== 4
     index_list = [item[0] for item in batch]
     max_len = max([len(item[1]) for item in batch])
     sentence_list = [[item[1][0]] + item[1][1:-1]+[0]*(max_len-len(item[1][1:-1])) + [item[1][-1]] for item in batch]
@@ -203,13 +210,14 @@ def batchfy(batch):
     max_img_width = max([item[2].shape[1] for item in batch ])
     max_img_height = max([item[2].shape[2] for item in batch ])
     imgs_list = [np.pad(item[2],
-                        ((0,0),(0,max_img_width-item[2].shape[1]),(0,max_img_height-item[2].shape[2])),'constant')[np.newaxis,:]
+                        ((0,0),(0,max_img_width-item[2].shape[1]),(0,max_img_height-item[2].shape[2])),'constant')# [np.newaxis,:]
                         for item in batch]
     # imgs_list = [item[2] for item in batch]
     lengths = [len(item) for item in sentence_list]
     # img_sizes = [item.shape for item in imgs_list]
     sent_tensor = torch.tensor(sentence_list,dtype=torch.long)
-    img_tensor = torch.tensor(np.vstack(imgs_list),dtype=torch.float)
+    img_tensor = torch.tensor(np.array(imgs_list),dtype=torch.float)
     len_tensor = torch.tensor(np.array(lengths),dtype=torch.long)
-    return (index_list,sent_tensor,img_tensor,len_tensor)
+    return index_list,sent_tensor,img_tensor,len_tensor
+
 

@@ -49,7 +49,7 @@ def get_images(load_csv_file,save_data_path,num_pics = 4000):
                     img = np.array(raw_img)
                     if len(img.shape)<3:
                         continue
-                    save_file_name = os.path.join(images_path,"img-%d.jpg"%idx)
+                    save_file_name = os.path.join(images_path,"img-%d"%idx)
                     with open(save_file_name,'wb') as f:
                         f.write(r.content)
                     raw_text = row[1]
